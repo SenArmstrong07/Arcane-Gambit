@@ -204,6 +204,49 @@ func place_piece(unit: Unit, piece_type_name: String, team_id: int, grid_pos: Ve
 func place_unit(unit: Unit, grid_pos: Vector2i) -> void:
 	place_piece(unit, unit.piece_type, unit.team, grid_pos)
 
+func is_castling_move_legal(king: Unit, destination: Vector2i) -> bool:
+	if king == null or king.piece_type.to_lower() != "king" or king.has_moved:
+		return false
+
+	if abs(destination.x - king.grid_pos.x) != 2 or king.grid_pos.y != destination.y:
+		return false
+
+	var rook_direction := -1 if destination.x < king.grid_pos.x else 1
+	var rook_from := king.grid_pos + Vector2i(rook_direction * (4 if rook_direction < 0 else 3), 0)
+	var rook_to := king.grid_pos + Vector2i(rook_direction, 0)
+	if not is_within_bounds(rook_from) or not is_within_bounds(rook_to):
+		return false
+
+	var rook := get_unit_at(rook_from)
+	if rook == null or rook.piece_type.to_lower() != "rook" or rook.team != king.team or rook.has_moved:
+		return false
+
+	if is_king_in_check(king.team):
+		return false
+
+	var path_clear := true
+	var path_cells: Array[Vector2i] = []
+	var current_path_cell := king.grid_pos + Vector2i(rook_direction, 0)
+	while is_within_bounds(current_path_cell) and current_path_cell != rook_from:
+		path_cells.append(current_path_cell)
+		current_path_cell += Vector2i(rook_direction, 0)
+
+	for path_cell in path_cells:
+		if is_cell_occupied(path_cell):
+			path_clear = false
+			break
+
+	if not path_clear:
+		return false
+
+	var squares_to_check := path_cells.duplicate()
+	squares_to_check.append(destination)
+	for square in squares_to_check:
+		if is_cell_attacked_by_team(square, 1 - king.team):
+			return false
+
+	return true
+
 func move_unit(unit: Unit, destination: Vector2i) -> void:
 	if not is_within_bounds(destination):
 		return
@@ -241,18 +284,12 @@ func move_unit(unit: Unit, destination: Vector2i) -> void:
 		else:
 			return
 	elif piece_name == "king" and abs(destination.x - start_pos.x) == 2 and start_pos.y == destination.y:
+		if not is_castling_move_legal(unit, destination):
+			return
 		var rook_direction := -1 if destination.x < start_pos.x else 1
-		rook_from = start_pos + Vector2i(rook_direction * 3, 0)
+		rook_from = start_pos + Vector2i(rook_direction * (4 if rook_direction < 0 else 3), 0)
 		rook_to = start_pos + Vector2i(rook_direction * 1, 0)
 		rook_to_move = get_unit_at(rook_from)
-		var path_clear := true
-		for step in range(1, 3):
-			var path_cell := start_pos + Vector2i(rook_direction * step, 0)
-			if not is_within_bounds(path_cell) or is_cell_occupied(path_cell):
-				path_clear = false
-				break
-		if not path_clear or rook_to_move == null or rook_to_move.piece_type.to_lower() != "rook" or rook_to_move.team != unit.team or rook_to_move.has_moved or unit.has_moved:
-			return
 
 	# Handle captures for any piece (non-pawn pieces like queen, rook, bishop, knight)
 	if captured_piece == null:
@@ -274,6 +311,9 @@ func move_unit(unit: Unit, destination: Vector2i) -> void:
 	unit.grid_pos = destination
 	unit.position = chess_board.map_to_local(destination)
 	unit.has_moved = true
+
+	if piece_name == "king" and rook_to_move != null:
+		unit.has_moved = true
 
 	if piece_name == "pawn" and (destination.y == 0 or destination.y == 7):
 		unit.piece_type = "queen"
