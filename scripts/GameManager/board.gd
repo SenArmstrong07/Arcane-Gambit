@@ -116,11 +116,14 @@ func select_unit(unit: Unit) -> void:
 		board_state = BoardState.AWAITING_ACTION
 		var can_move := move_targets.size() > 0
 		var popup := ActionPopupScene.instantiate() as Window
-		add_child(popup)
+		# Ensure no other action popups remain (prevents exclusive-window and duplicates)
+		_remove_existing_action_popups()
+		# Add the popup to the viewport root so it's positioned in screen/gui coordinates
+		get_tree().get_root().add_child(popup)
 		popup.configure(can_move, true, "Move or attack?", "Move", "Attack")
 		popup.wait_selected.connect(_on_selection_move)
 		popup.attack_selected.connect(_on_selection_attack)
-		popup.popup_centered()
+		position_action_popup(popup, unit)
 	SignalBus.unit_selected.emit(unit)
 
 func deselect() -> void:
@@ -429,12 +432,32 @@ func request_post_move_action(unit: Unit) -> void:
 		if unit.can_attack_target(enemy):
 			can_attack = true
 			break
+	# After checking enemies, show the popup once with the correct can_attack flag
 	var popup := ActionPopupScene.instantiate() as Window
-	add_child(popup)
+	# Ensure no other action popups remain (prevents exclusive-window and duplicates)
+	_remove_existing_action_popups()
+	# Add the popup to the viewport root so it's positioned in screen/gui coordinates
+	get_tree().get_root().add_child(popup)
 	popup.configure(true, can_attack, "Wait or attack?", "Wait", "Attack")
 	popup.wait_selected.connect(_on_action_wait)
 	popup.attack_selected.connect(_on_action_attack)
-	popup.popup_centered()
+	position_action_popup(popup, unit)
+
+func position_action_popup(popup: Window, anchor_unit: Unit) -> void:
+	if popup == null or anchor_unit == null:
+		return
+	var popup_size := popup.size
+	var anchor_position := anchor_unit.global_position
+	# Convert the world (canvas) position to screen/gui coordinates using the viewport's canvas transform
+	var screen_position := get_viewport().get_canvas_transform() * anchor_position
+	popup.position = Vector2(screen_position.x + 32, screen_position.y - popup_size.y / 2)
+	popup.popup()
+
+func _remove_existing_action_popups() -> void:
+	var root := get_tree().get_root()
+	for child in root.get_children():
+		if child is ActionPopup:
+			child.queue_free()
 
 func get_attackable_enemies(unit: Unit) -> Array[Unit]:
 	var enemies: Array[Unit] = []
