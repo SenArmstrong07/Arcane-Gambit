@@ -2,6 +2,7 @@ extends CanvasLayer
 class_name BattleScene
 
 signal battle_resolved(result: String)
+signal battle_animation_finished
 
 @onready var attacker_sprite: Sprite2D = $Panel/VBoxContainer/Arena/AttackerSprite
 @onready var target_sprite: Sprite2D = $Panel/VBoxContainer/Arena/TargetSprite
@@ -204,6 +205,7 @@ func _on_animation_finished() -> void:
 		result = attacker_unit.resolve_combat(defender_unit)
 	update_health_bar(attacker_health_bar, attacker_unit.get_health_component())
 	update_health_bar(target_health_bar, defender_unit.get_health_component())
+	emit_signal("battle_animation_finished")
 	emit_signal("battle_resolved", result)
 	finish_button.visible = true
 	finish_button.text = "Continue"

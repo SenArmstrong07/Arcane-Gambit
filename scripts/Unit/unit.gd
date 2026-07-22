@@ -53,6 +53,8 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is not InputEventMouseButton:
 		return
+	if board != null and board.input_locked:
+		return
 
 	if board != null and board.game_over:
 		return

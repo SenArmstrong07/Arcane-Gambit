@@ -49,6 +49,7 @@ enum BoardState {
 }
 
 var board_state = BoardState.IDLE
+var input_locked: bool = false
 
 func _ready() -> void:
 	add_to_group("Board")
@@ -66,6 +67,11 @@ func _ready() -> void:
 	print("Units scale:", units.scale)
 	SignalBus.unit_dropped.connect(_on_unit_dropped)
 	clear_highlights()
+	# find EventBannerManager if present
+	var banner_mgr = get_tree().get_root().get_node_or_null("Game/UI/EventBannerManager")
+	if banner_mgr == null:
+		banner_mgr = get_tree().get_root().get_node_or_null("/root/Game/UI/EventBannerManager")
+
 
 
 func _process(delta: float) -> void:
@@ -77,7 +83,7 @@ func _process(delta: float) -> void:
 
 #Mouse Handlers
 func _input(event: InputEvent) -> void:
-	if game_over or board_state == BoardState.COMBAT:
+	if input_locked or game_over or board_state == BoardState.COMBAT:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var local_mouse_pos := chess_board.get_local_mouse_position()
@@ -217,8 +223,8 @@ func setup_initial_pieces() -> void:
 		spawn_piece("pawn", 0, Vector2i(x, 6))
 		spawn_piece("pawn", 1, Vector2i(x, 1))
 
-	var white_back_rank := ["rook", "knight", "bishop", "queen", "king", "bishop", "knight", "rook"]
-	var black_back_rank := ["rook", "knight", "bishop", "queen", "king", "bishop", "knight", "rook"]
+	var white_back_rank := ["rook", "knight", "bishop", "queen", "rook", "bishop", "knight", "rook"]
+	var black_back_rank := ["rook", "knight", "bishop", "queen", "rook", "bishop", "knight", "rook"]
 	for index in range(BOARD_SIZE):
 		spawn_piece(white_back_rank[index], 0, Vector2i(index, 7))
 		spawn_piece(black_back_rank[index], 1, Vector2i(index, 0))
@@ -302,6 +308,7 @@ func place_piece(unit: Unit, piece_type_name: String, team_id: int, grid_pos: Ve
 func place_unit(unit: Unit, grid_pos: Vector2i) -> void:
 	place_piece(unit, unit.piece_type, unit.team, grid_pos)
 
+# (For now) UNUSED since we're using a different victory condition, by concealing the "royalty" status of a chosen piece
 func is_castling_move_legal(king: Unit, destination: Vector2i) -> bool:
 	if king == null or king.piece_type.to_lower() != "king" or king.has_moved:
 		return false
@@ -852,6 +859,12 @@ func finalize_royal_assignment() -> void:
 	hide_assignment_overlay()
 	update_king_check_visuals()
 	current_turn = 0
+	SignalBus.royal_assignment_finished.emit(current_turn)
+	var banner_mgr = get_tree().get_root().get_node_or_null("Game/UI/EventBannerManager")
+	if banner_mgr == null:
+		banner_mgr = get_tree().get_root().get_node_or_null("/root/Game/UI/EventBannerManager")
+	if banner_mgr != null and banner_mgr.has_method("_on_royal_assignment_finished"):
+		banner_mgr.call_deferred("_on_royal_assignment_finished", current_turn)
 
 
 func show_assignment_overlay() -> void:
@@ -898,6 +911,24 @@ func clear_assignment_highlight() -> void:
 		u.sprite_node.scale = u._original_scale
 	
 
+func set_input_locked(is_locked: bool) -> void:
+	input_locked = is_locked
+	_refresh_unit_interaction()
+
+func _refresh_unit_interaction() -> void:
+	for u in units.get_children():
+		if not (u is Unit):
+			continue
+		var unit := u as Unit
+		var allow_interaction := not input_locked
+		if royal_assignment_active:
+			allow_interaction = allow_interaction and unit.team == current_turn
+		else:
+			allow_interaction = allow_interaction and unit.team == current_turn
+		unit.input_pickable = allow_interaction
+		if unit.hover_area != null:
+			unit.hover_area.input_pickable = not input_locked
+
 func set_assignment_interaction(team: int) -> void:
 	# team == -1 -> enable all units; otherwise only enable units for the given team
 	for u in units.get_children():
@@ -910,9 +941,9 @@ func set_assignment_interaction(team: int) -> void:
 		else:
 			enable = unit.team == team
 		# Allow hovering for all units during assignment, but only allow clicking/selection for the active team
-		unit.input_pickable = enable
+		unit.input_pickable = enable and not input_locked
 		if unit.hover_area != null:
-			unit.hover_area.input_pickable = true
+			unit.hover_area.input_pickable = not input_locked
 
 func assign_royal_units() -> void:
 	finalize_royal_assignment()
@@ -963,6 +994,7 @@ func end_game(winning_team: int) -> void:
 	SignalBus.game_over.emit(winning_team)
 
 # Check if the king is in checkmate
+# DEPRECATED (FOR NOW) since we're using a simpler victory condition based on throne capture. Keeping this for potential future use.
 func is_king_in_checkmate(team: int) -> bool:
 	if not is_king_in_check(team):
 		return false
@@ -998,3 +1030,7 @@ func check_game_state() -> void:
 	var opponent_team := 1 - current_turn
 	update_king_check_visuals()
 	current_turn = opponent_team
+	# Announce the new phase via EventBannerManager if present
+	var banner_mgr = get_tree().get_root().get_node_or_null("Game/UI/EventBannerManager")
+	if banner_mgr and banner_mgr.has_method("announce_type"):
+		banner_mgr.announce_type(banner_mgr.BannerType.PHASE, {"team": current_turn})

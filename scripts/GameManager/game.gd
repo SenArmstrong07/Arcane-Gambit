@@ -15,6 +15,10 @@ var game_over: bool = false
 func _ready() -> void:
 	board = get_node_or_null("Board") as Board
 	SignalBus.unit_moved.connect(_on_unit_moved)
+	var banner_mgr = get_node_or_null("UI/EventBannerManager")
+	if banner_mgr != null:
+		banner_mgr.banner_started.connect(_on_banner_started)
+		banner_mgr.banner_finished.connect(_on_banner_finished)
 	SignalBus.turn_wait_confirmed.connect(_on_turn_wait_confirmed)
 	SignalBus.move_history_undone.connect(_on_move_history_undone)
 	SignalBus.game_over.connect(_on_game_over)
@@ -93,6 +97,14 @@ func _on_piece_defeated(victim: Unit, killer: Unit) -> void:
 		status_label.text = message
 	update_ui()
 
+func _on_banner_started() -> void:
+	if board != null:
+		board.set_input_locked(true)
+
+func _on_banner_finished() -> void:
+	if board != null:
+		board.set_input_locked(false)
+
 func _on_reset_pressed() -> void:
 	reset_button.visible = false
 	game_over_label.visible = false
@@ -138,7 +150,7 @@ func add_ui() -> void:
 
 	status_label = Label.new()
 	status_label.name = "StatusLabel"
-	status_label.position = Vector2(20, 300)
+	status_label.position = Vector2(5, 335)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	status_label.size = Vector2(320, 120)
 	canvas.add_child(status_label)
@@ -165,11 +177,12 @@ func update_ui() -> void:
 	var player_name := "White" if current_player == 0 else "Black"
 	turn_label.text = "Turn: %s" % player_name
 	if board != null and board.royal_assignment_active:
+		#TO DO: Replace with a proper text label node for the player to select their monarch
 		status_label.text = "Choose your monarch for %s." % ("White" if current_player == 0 else "Black")
 	elif board != null and board.game_over:
 		status_label.text = "The throne has been claimed."
-	else:
-		status_label.text = "Movement and combat resolve the usurpation contest."
+	# else:
+	# 	status_label.text = "Movement and combat resolve the usurpation contest."
 	var history_text := "Moves:\n"
 	for index in range(move_history.size()):
 		history_text += "%d. %s\n" % [index + 1, move_history[index]]

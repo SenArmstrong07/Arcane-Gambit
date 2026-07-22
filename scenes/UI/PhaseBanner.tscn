@@ -1,0 +1,40 @@
+[gd_scene format=3 uid="uid://cj4kegwn2lnom"]
+
+[ext_resource type="Script" uid="uid://b8ao0sdxq77hi" path="res://scripts/UI/event_banner.gd" id="1_lcvlc"]
+
+[node name="PhaseBanner" type="Node2D" unique_id=1823111581]
+script = ExtResource("1_lcvlc")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=441225102]
+
+[node name="CenterContainer" type="CenterContainer" parent="CanvasLayer" unique_id=1331126393]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 261.0
+offset_right = 2.0
+offset_bottom = -205.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="CanvasLayer/CenterContainer" unique_id=1245960289]
+custom_minimum_size = Vector2(1200, 200)
+layout_mode = 2
+
+[node name="BannerPanel" type="Panel" parent="CanvasLayer/CenterContainer/MarginContainer" unique_id=46690504]
+custom_minimum_size = Vector2(1200, 200)
+layout_mode = 2
+
+[node name="Title_Label" type="Label" parent="CanvasLayer/CenterContainer/MarginContainer/BannerPanel" unique_id=1935002510]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 503.0
+offset_top = 74.0
+offset_right = -532.0
+offset_bottom = -93.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Sample"
+horizontal_alignment = 1
