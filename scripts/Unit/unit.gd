@@ -46,7 +46,6 @@ func _ready() -> void:
 	init_attack_component()
 
 func _process(delta: float) -> void:
-	update_combat(delta)
 	if is_dragging:
 		global_position = get_global_mouse_position() + drag_offset
 
@@ -60,22 +59,47 @@ func _input(event: InputEvent) -> void:
 		return
 
 	var mouse_event := event as InputEventMouseButton
-	if mouse_event.button_index != MOUSE_BUTTON_LEFT:
+	if mouse_event.button_index != MOUSE_BUTTON_LEFT or not mouse_event.pressed:
 		return
 
-	if mouse_event.pressed:
-		var mouse_position := get_global_mouse_position()
-		if is_under_mouse(mouse_position):
-			if board != null:
-				# During the royal assignment phase, clicks should select the monarch
-				# rather than enter normal piece selection/movement flow.
-				if board.royal_assignment_active:
-					board.handle_click(grid_pos)
-					return
-				board.select_unit(self)
+	var mouse_position := get_global_mouse_position()
+	if not is_under_mouse(mouse_position):
+		return
 
-func update_combat(delta):
-	pass
+	if board == null:
+		return
+
+	print("[Unit._input] clicked unit", self.get_name(), "team", team, "board_state", board.board_state)
+
+	if board.has_method("is_royal_assignment_active") and board.is_royal_assignment_active():
+		if board.has_method("assign_monarch_for_current_player"):
+			print("[Unit._input] royal assignment click", self.get_name())
+			board.assign_monarch_for_current_player(self)
+		get_viewport().set_input_as_handled()
+		return
+
+	if board.board_state == board.BoardState.AWAITING_ATTACK_TARGET:
+		if board.pending_attack_unit != null and self.team != board.current_turn and board.pending_attack_targets.has(grid_pos):
+			print("[Unit._input] direct attack target click on", self.get_name(), "pending_attack_unit", board.pending_attack_unit)
+			board.show_battle_overlay(board.pending_attack_unit, self)
+			board.pending_attack_unit = null
+			board.pending_attack_targets.clear()
+			get_viewport().set_input_as_handled()
+			return
+		print("[Unit._input] ignoring unit click during AWAITING_ATTACK_TARGET")
+		return
+
+	if board.selected_unit != null and board.selected_unit.team == board.current_turn and self.team != board.current_turn:
+		if board.has_method("show_battle_overlay") and board.selected_unit.can_attack_target(self):
+			print("[Unit._input] direct enemy attack shortcut on", self.get_name())
+			board.show_battle_overlay(board.selected_unit, self)
+			board.selected_unit = null
+			get_viewport().set_input_as_handled()
+			return
+	if board.has_method("select_unit"):
+		print("[Unit._input] selecting unit", self.get_name())
+		board.select_unit(self)
+		get_viewport().set_input_as_handled()
 
 func is_under_mouse(mouse_position: Vector2) -> bool:
 	var hitbox_size := Vector2(48, 48)
@@ -92,7 +116,7 @@ func _on_sprite_mouse_entered() -> void:
 	print(board)
 	if board != null and not _hovering:
 		_hovering = true
-		if board != null and board.royal_assignment_active:
+		if board.has_method("is_royal_assignment_active") and board.is_royal_assignment_active():
 			board.show_assignment_highlight(self)
 		else:
 			board.show_tooltip_for_unit(self)
@@ -101,7 +125,7 @@ func _on_sprite_mouse_exited() -> void:
 	print("EXITED")
 	if _hovering:
 		_hovering = false
-		if board != null and board.royal_assignment_active:
+		if board.has_method("is_royal_assignment_active") and board.is_royal_assignment_active():
 			board.clear_assignment_highlight()
 		else:
 			board.hide_tooltip()

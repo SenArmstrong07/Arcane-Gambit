@@ -22,21 +22,25 @@ var last_action_has_moved: bool = false
 @onready var _tooltip: TooltipUI = $TooltipLayer/Tooltip
 var throne_manager: ThroneManager = null
 var players: Array[Player] = []
-var assignment_overlay_layer: CanvasLayer = null
-var assignment_overlay_rect: ColorRect = null
-var hovered_assignment_unit: Unit = null
-const HighlightScene = preload("res://scenes/UI/HighlightCells.tscn")
-const HighlightAtkScene = preload("res://scenes/UI/HighlightAtk.tscn")
-const ActionPopupScene = preload("res://scenes/UI/ActionPopup.tscn")
 const Battle_Scene = preload("res://scenes/GameManager/Battle/BattleScene.tscn")
 var highlighted_cells: Array
 var post_move_unit: Unit = null
 var pending_attack_unit: Unit = null
+const RoyalAssignmentControllerScene = preload("res://scripts/UI/royal_assignment_controller.gd")
+var royal_assignment_controller: RoyalAssignmentController = null
 var pending_attack_targets: Array[Vector2i] = []
 var pending_battle_attacker: Unit = null
 var pending_battle_defender: Unit = null
 var pending_history_actions: Array = []
 var royal_assignment_active: bool = false
+
+const HighlightManagerScene = preload("res://scripts/UI/highlight_manager.gd")
+const ActionPopupControllerScene = preload("res://scripts/UI/popup_controller.gd")
+const TooltipManagerScene = preload("res://scripts/UI/tooltip_manager.gd")
+
+var highlight_manager: HighlightManager = null
+var action_popup_controller: ActionPopupController = null
+var tooltip_manager: TooltipManager = null
 
 enum BoardState {
 	IDLE,
@@ -57,10 +61,17 @@ func _ready() -> void:
 	throne_manager = ThroneManager.new()
 	add_child(throne_manager)
 	players = [Player.new(0), Player.new(1)]
-	register_initial_thrones()
-	print(chess_board.get_used_rect())
-	print("Tile size:", chess_board.tile_set.tile_size)
-	print("map_to_local(0,0):", chess_board.map_to_local(Vector2i(0,0)))
+	highlight_manager = HighlightManagerScene.new()
+	add_child(highlight_manager)
+	highlight_manager.init(chess_board, highlight_markers)
+	action_popup_controller = ActionPopupControllerScene.new()
+	add_child(action_popup_controller)
+	tooltip_manager = TooltipManagerScene.new()
+	add_child(tooltip_manager)
+	tooltip_manager.init(_tooltip)
+	royal_assignment_controller = RoyalAssignmentControllerScene.new()
+	add_child(royal_assignment_controller)
+	royal_assignment_controller.init(self)
 	print("map_to_local(1,0):", chess_board.map_to_local(Vector2i(1,0)))
 	print("Board scale:", scale)
 	print("TileMap scale:", chess_board.scale)
@@ -88,8 +99,9 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var local_mouse_pos := chess_board.get_local_mouse_position()
 		var clicked_cell := chess_board.local_to_map(local_mouse_pos)
+		print("[Board._input] clicked cell", clicked_cell, "board_state", board_state, "selected_unit", selected_unit)
 		handle_click(clicked_cell)
-		print("Selected Cell: ", clicked_cell)
+		print("[Board._input] handle_click returned")
 
 func handle_click(cell: Vector2i) -> void:
 	if board_state == BoardState.AWAITING_ROYAL_ASSIGNMENT:
@@ -148,27 +160,16 @@ func select_unit(unit: Unit) -> void:
 	else:
 		board_state = BoardState.AWAITING_ACTION
 		var can_move := move_targets.size() > 0
-		var popup := ActionPopupScene.instantiate() as Window
-		# Ensure no other action popups remain (prevents exclusive-window and duplicates)
-		_remove_existing_action_popups()
-		# Add the popup to the viewport root so it's positioned in screen/gui coordinates
-		get_tree().get_root().add_child(popup)
-		popup.configure(can_move, true, "Move or attack?", "Move", "Attack", "Undo", can_undo_last_action())
-		popup.wait_selected.connect(_on_selection_move)
-		popup.attack_selected.connect(_on_selection_attack)
-		popup.undo_selected.connect(_on_action_undo)
-		position_action_popup(popup, unit)
-	SignalBus.unit_selected.emit(unit)
+		if action_popup_controller != null:
+			action_popup_controller.show_for(unit, can_move, true, can_undo_last_action(), Callable(self, "_on_selection_move"), Callable(self, "_on_selection_attack"), Callable(self, "_on_action_undo"), "Move or attack?", "Move", "Attack", "Undo")
 
 func deselect() -> void:
 	selected_unit = null
 	clear_highlights()
 
 func clear_highlights() -> void:
-	for child in highlight_markers.get_children():
-		child.queue_free()
-	highlighted_cells.clear()
-	highlight_markers.visible = false
+	if highlight_manager != null:
+		highlight_manager.clear()
 
 func _on_unit_dropped(unit: Unit, cell: Vector2i) -> void:
 	if game_over or board_state == BoardState.AWAITING_ROYAL_ASSIGNMENT:
@@ -205,17 +206,12 @@ func world_to_grid(pos: Vector2) -> Vector2i:
 
 #choosing first
 func highlight_cells(cells: Array[Vector2i], use_attack_texture: bool = false) -> void:
-	clear_highlights()
-	for cell in cells:
-		var marker: Node2D
-		if use_attack_texture:
-			marker = HighlightAtkScene.instantiate()
-		else:
-			marker = HighlightScene.instantiate()
-		marker.position = chess_board.map_to_local(cell)
-		highlight_markers.add_child(marker)
-		highlighted_cells.append(marker)
-	highlight_markers.visible = true
+	if highlight_manager == null:
+		return
+	if use_attack_texture:
+		highlight_manager.show_attack_tiles(cells)
+	else:
+		highlight_manager.show_move_tiles(cells)
 
 func setup_initial_pieces() -> void:
 	clear_board()
@@ -487,6 +483,9 @@ func can_move_to(unit: Unit, destination: Vector2i) -> bool:
 		return false
 	return destination in unit.get_valid_moves(self)
 
+func can_undo_last_action() -> bool:
+	return last_action_piece != null and last_action_piece.is_inside_tree() and last_action_from != last_action_to and last_action_piece.grid_pos == last_action_to and last_action_piece.team == current_turn
+
 func request_post_move_action(unit: Unit) -> void:
 	if unit == null:
 		return
@@ -501,31 +500,8 @@ func request_post_move_action(unit: Unit) -> void:
 		if unit.can_attack_target(enemy):
 			can_attack = true
 			break
-	# After checking enemies, show the popup once with the correct can_attack flag
-	var popup := ActionPopupScene.instantiate() as Window
-	# Ensure no other action popups remain (prevents exclusive-window and duplicates)
-	_remove_existing_action_popups()
-	# Add the popup to the viewport root so it's positioned in screen/gui coordinates
-	get_tree().get_root().add_child(popup)
-	popup.configure(true, can_attack, "Wait or attack?", "Wait", "Attack", "Undo", can_undo_last_action())
-	popup.wait_selected.connect(_on_action_wait)
-	popup.attack_selected.connect(_on_action_attack)
-	popup.undo_selected.connect(_on_action_undo)
-	position_action_popup(popup, unit)
-
-func position_action_popup(popup: Window, anchor_unit: Unit) -> void:
-	if popup == null or anchor_unit == null:
-		return
-	var popup_size := popup.size
-	var anchor_position := anchor_unit.global_position
-	# Convert the world (canvas) position to screen/gui coordinates using the viewport's canvas transform
-	var screen_position := get_viewport().get_canvas_transform() * anchor_position
-	popup.position = Vector2(screen_position.x + 32, screen_position.y - popup_size.y / 2)
-	popup.popup()
-
-func can_undo_last_action() -> bool:
-	return last_action_piece != null and last_action_piece.is_inside_tree() and last_action_from != last_action_to and last_action_piece.grid_pos == last_action_to and last_action_piece.team == current_turn
-
+	if action_popup_controller != null:
+		action_popup_controller.show_for(unit, true, can_attack, can_undo_last_action(), Callable(self, "_on_action_wait"), Callable(self, "_on_action_attack"), Callable(self, "_on_action_undo"), "Wait or attack?", "Wait", "Attack", "Undo")
 func undo_last_action() -> void:
 	if not can_undo_last_action():
 		return
@@ -564,32 +540,14 @@ func undo_last_action() -> void:
 	board_state = BoardState.IDLE
 
 func show_tooltip_for_unit(unit: Unit) -> void:
-	if unit == null or not unit.is_inside_tree() or self._tooltip == null:
+	if tooltip_manager == null:
 		return
-	if get_unit_at(unit.grid_pos) != unit:
-		return
-	var health_comp := unit.get_health_component()
-	var atk_comp := unit.get_attack_component()
-	var hp_text := "N/A"
-	var atk_text := "N/A"
-	if health_comp != null:
-		hp_text = str(health_comp.get_current_health())
-	if atk_comp != null:
-		atk_text = str(atk_comp.get_damage_amount())
-	var text := "%s\nHP: %s  ATK: %s" % [unit.get_piece_name(), hp_text, atk_text]
-	var screen_position := get_viewport().get_canvas_transform() * unit.global_position
-	var offset := Vector2(25, -25)
-	self._tooltip.show_tooltip(text, screen_position + offset)
+	tooltip_manager.show_unit_tooltip(unit)
 
 func hide_tooltip() -> void:
-	if self._tooltip != null:
-		self._tooltip.hide_tooltip()
-
-func _remove_existing_action_popups() -> void:
-	var root := get_tree().get_root()
-	for child in root.get_children():
-		if child is ActionPopup:
-			child.queue_free()
+	if tooltip_manager == null:
+		return
+	tooltip_manager.hide_tooltip()
 
 func get_attackable_enemies(unit: Unit) -> Array[Unit]:
 	var enemies: Array[Unit] = []
@@ -619,6 +577,7 @@ func _on_selection_move() -> void:
 	highlight_cells(moves)
 
 func _on_selection_attack() -> void:
+	print("[Board._on_selection_attack] selected_unit", selected_unit)
 	if selected_unit == null:
 		board_state = BoardState.IDLE
 		return
@@ -631,6 +590,7 @@ func _on_selection_attack() -> void:
 	for enemy in enemy_list:
 		pending_attack_targets.append(enemy.grid_pos)
 	board_state = BoardState.AWAITING_ATTACK_TARGET
+	_refresh_unit_interaction()
 	var attack_targets := selected_unit.get_attack_targets(self)
 	if attack_targets.is_empty():
 		attack_targets = pending_attack_targets
@@ -695,10 +655,12 @@ func show_battle_overlay(attacker: Unit, defender: Unit) -> void:
 	pending_history_actions.append({"unit": attacker, "from": attacker.grid_pos, "to": defender.grid_pos, "type": "attack"})
 
 func _on_battle_resolved(result: String) -> void:
-	handle_combat_result(pending_battle_attacker, pending_battle_defender, result)
+	var attacker := pending_battle_attacker if pending_battle_attacker != null and is_instance_valid(pending_battle_attacker) else null
+	var defender := pending_battle_defender if pending_battle_defender != null and is_instance_valid(pending_battle_defender) else null
+	handle_combat_result(attacker, defender, result)
 	# When a battle finishes and the attacker is the current player, ensure any pending actions
 	# (including this attack) are recorded — if this ends the turn without an explicit Wait.
-	if pending_battle_attacker != null and pending_battle_attacker.team == current_turn:
+	if attacker != null and attacker.team == current_turn:
 		# Ensure the attack action is present (it should already have been appended in show_battle_overlay)
 		# Emit all pending actions as the turn is effectively ending
 		for action in pending_history_actions:
@@ -713,27 +675,33 @@ func _on_battle_resolved(result: String) -> void:
 	check_victory_conditions()
 
 func _on_action_attack() -> void:
-	if post_move_unit == null:
+	print("[Board._on_action_attack] post_move_unit", post_move_unit, "selected_unit", selected_unit)
+	var attacker := post_move_unit
+	if attacker == null:
+		attacker = selected_unit
+	if attacker == null:
 		board_state = BoardState.IDLE
 		return
 	var enemy_list := []
 	for enemy in units.get_children():
 		if not (enemy is Unit):
 			continue
-		if enemy.team == post_move_unit.team:
+		if enemy.team == attacker.team:
 			continue
-		if post_move_unit.can_attack_target(enemy):
+		if attacker.can_attack_target(enemy):
 			enemy_list.append(enemy)
 	if enemy_list.is_empty():
 		board_state = BoardState.IDLE
 		check_game_state()
 		return
-	pending_attack_unit = post_move_unit
+	pending_attack_unit = attacker
 	pending_attack_targets.clear()
 	for enemy in enemy_list:
 		pending_attack_targets.append(enemy.grid_pos)
 	board_state = BoardState.AWAITING_ATTACK_TARGET
-	var attack_targets := post_move_unit.get_attack_targets(self)
+	print("[Board._on_action_attack] pending_attack_targets", pending_attack_targets)
+	_refresh_unit_interaction()
+	var attack_targets := attacker.get_attack_targets(self)
 	if attack_targets.is_empty():
 		attack_targets = pending_attack_targets
 	highlight_cells(attack_targets, true)
@@ -806,14 +774,18 @@ func would_move_leave_king_in_check(piece: Unit, destination: Vector2i) -> bool:
 	return in_check
 
 func begin_royal_assignment() -> void:
-	royal_assignment_active = true
 	current_turn = 0
 	board_state = BoardState.AWAITING_ROYAL_ASSIGNMENT
-	# Restrict input so only the active player's pieces may be clicked for assignment
-	set_assignment_interaction(current_turn)
-	show_assignment_overlay()
+	royal_assignment_active = true
+	if royal_assignment_controller != null:
+		royal_assignment_controller.start_assignment(current_turn)
+	else:
+		set_assignment_interaction(current_turn)
 
 func assign_monarch_for_current_player(unit: Unit) -> void:
+	if royal_assignment_controller != null:
+		royal_assignment_controller.try_assign(unit)
+		return
 	if unit == null or not royal_assignment_active:
 		return
 	if unit.team != current_turn:
@@ -836,6 +808,7 @@ func assign_monarch_for_current_player(unit: Unit) -> void:
 	clear_highlights()
 
 func finalize_royal_assignment() -> void:
+	royal_assignment_active = false
 	for player in players:
 		if player == null:
 			continue
@@ -852,13 +825,16 @@ func finalize_royal_assignment() -> void:
 		if fallback_unit != null:
 			player.assign_royal_unit(fallback_unit)
 	# Ensure all pieces are interactable again
-	set_assignment_interaction(-1)
-	royal_assignment_active = false
+	if royal_assignment_controller == null:
+		set_assignment_interaction(-1)
 	board_state = BoardState.IDLE
-	clear_highlights()
-	hide_assignment_overlay()
-	update_king_check_visuals()
 	current_turn = 0
+	if royal_assignment_controller != null:
+		_refresh_unit_interaction()
+	else:
+		set_assignment_interaction(-1)
+	clear_highlights()
+	update_king_check_visuals()
 	SignalBus.royal_assignment_finished.emit(current_turn)
 	var banner_mgr = get_tree().get_root().get_node_or_null("Game/UI/EventBannerManager")
 	if banner_mgr == null:
@@ -868,47 +844,18 @@ func finalize_royal_assignment() -> void:
 
 
 func show_assignment_overlay() -> void:
-	if assignment_overlay_layer != null and is_instance_valid(assignment_overlay_layer):
-		return
-	assignment_overlay_layer = CanvasLayer.new()
-	assignment_overlay_layer.layer = 100
-	get_tree().get_root().call_deferred("add_child", assignment_overlay_layer)
-	assignment_overlay_rect = ColorRect.new()
-	assignment_overlay_rect.color = Color(0, 0, 0, 0.45)
-	assignment_overlay_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	assignment_overlay_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	assignment_overlay_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Make it full-screen
-	assignment_overlay_rect.size = get_viewport().get_visible_rect().size
-	assignment_overlay_layer.add_child(assignment_overlay_rect)
+	pass
 
 func hide_assignment_overlay() -> void:
-	if assignment_overlay_layer != null and is_instance_valid(assignment_overlay_layer):
-		assignment_overlay_layer.queue_free()
-		assignment_overlay_layer = null
-		assignment_overlay_rect = null
+	pass
 
 func show_assignment_highlight(unit: Unit) -> void:
-	if unit == null:
-		return
-	# Clear previous
-	clear_assignment_highlight()
-	hovered_assignment_unit = unit
-	# Apply a bright modulate and slight scale to simulate a shine
-	if unit.sprite_node != null:
-		unit._original_modulate = unit.sprite_node.modulate
-		unit.sprite_node.modulate = Color(1.25, 1.25, 0.9, 1)
-		unit.sprite_node.scale = unit.sprite_node.scale * 1.08
+	if royal_assignment_controller != null:
+		royal_assignment_controller.show_hover(unit)
 
 func clear_assignment_highlight() -> void:
-	if hovered_assignment_unit == null:
-		return
-	var u := hovered_assignment_unit
-	hovered_assignment_unit = null
-	if u != null and u.sprite_node != null:
-		# restore
-		u.sprite_node.modulate = u._original_modulate
-		u.sprite_node.scale = u._original_scale
+	if royal_assignment_controller != null:
+		royal_assignment_controller.clear_hover()
 	
 
 func set_input_locked(is_locked: bool) -> void:
@@ -916,18 +863,40 @@ func set_input_locked(is_locked: bool) -> void:
 	_refresh_unit_interaction()
 
 func _refresh_unit_interaction() -> void:
+	if royal_assignment_controller != null and royal_assignment_controller.is_active():
+		royal_assignment_controller._refresh_unit_interaction()
+		return
 	for u in units.get_children():
 		if not (u is Unit):
 			continue
 		var unit := u as Unit
 		var allow_interaction := not input_locked
-		if royal_assignment_active:
+		if board_state == BoardState.AWAITING_ATTACK_TARGET:
+			allow_interaction = allow_interaction and (unit.team == current_turn or pending_attack_targets.has(unit.grid_pos))
+		else:
 			allow_interaction = allow_interaction and unit.team == current_turn
+		unit.input_pickable = allow_interaction
+		if unit.hover_area != null:
+			unit.hover_area.input_pickable = allow_interaction
+
+func _set_unit_input_pickable(active: bool, team: int) -> void:
+	for u in units.get_children():
+		if not (u is Unit):
+			continue
+		var unit := u as Unit
+		var allow_interaction := not input_locked
+		if active:
+			allow_interaction = allow_interaction and unit.team == team
 		else:
 			allow_interaction = allow_interaction and unit.team == current_turn
 		unit.input_pickable = allow_interaction
 		if unit.hover_area != null:
 			unit.hover_area.input_pickable = not input_locked
+
+func is_royal_assignment_active() -> bool:
+	if royal_assignment_controller != null:
+		return royal_assignment_controller.is_active()
+	return royal_assignment_active
 
 func set_assignment_interaction(team: int) -> void:
 	# team == -1 -> enable all units; otherwise only enable units for the given team

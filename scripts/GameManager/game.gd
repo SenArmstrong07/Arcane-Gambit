@@ -176,7 +176,7 @@ func update_ui() -> void:
 	current_player = board.current_turn
 	var player_name := "White" if current_player == 0 else "Black"
 	turn_label.text = "Turn: %s" % player_name
-	if board != null and board.royal_assignment_active:
+	if board != null and board.has_method("is_royal_assignment_active") and board.is_royal_assignment_active():
 		#TO DO: Replace with a proper text label node for the player to select their monarch
 		status_label.text = "Choose your monarch for %s." % ("White" if current_player == 0 else "Black")
 	elif board != null and board.game_over:

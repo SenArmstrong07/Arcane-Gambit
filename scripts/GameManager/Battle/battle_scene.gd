@@ -199,14 +199,14 @@ func _spawn_speed_line(banner: ColorRect, banner_w: int, banner_h: int, color: C
 	t.tween_callback(Callable(line, "queue_free")).set_delay(dur)
 
 
+var battle_result: String = "draw"
+
 func _on_animation_finished() -> void:
-	var result: String = "draw"
 	if attacker_unit != null and defender_unit != null:
-		result = attacker_unit.resolve_combat(defender_unit)
+		battle_result = attacker_unit.resolve_combat(defender_unit)
 	update_health_bar(attacker_health_bar, attacker_unit.get_health_component())
 	update_health_bar(target_health_bar, defender_unit.get_health_component())
 	emit_signal("battle_animation_finished")
-	emit_signal("battle_resolved", result)
 	finish_button.visible = true
 	finish_button.text = "Continue"
 
@@ -217,6 +217,7 @@ func _on_animation_finished() -> void:
 		speedline_timer = null
 
 func _on_finish_pressed() -> void:
+	emit_signal("battle_resolved", battle_result)
 	queue_free()
 
 func _on_speedline_timer_timeout() -> void:
